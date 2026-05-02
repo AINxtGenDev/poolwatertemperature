@@ -1,7 +1,53 @@
 # Session Checkpoint — Pool Temperature Monitor
 
-**Last session:** 2026-04-28
+**Last session:** 2026-05-02
 **Working dir:** `/home/nuc8/01_smarthome/01_HomeAssistant/03_esphome/02_pool_watertemperature/esp32_lolin32_lite`
+
+## 2026-05-02 — Repo published to GitHub; toolchain bump
+
+**Git sync — first push to public remote.**
+Project directory was not yet a git repo. Initialized and synced with
+`git@github.com:AINxtGenDev/poolwatertemperature` (PUBLIC).
+
+- `.gitignore` written before any `git add`. Excludes `secrets.yaml`
+  (contained real WiFi/OTA passwords + 5 ESPHome API encryption keys for
+  the wider fleet — never reached the index, verified via
+  `git check-ignore` and `git ls-files`), plus `*.bak`, PlatformIO build
+  dirs (`firmware/.pio*`), ESPHome build artifacts (`.esphome/`, `build/`),
+  HA `.storage/`, Python venvs.
+- Local repo configured with `core.sshCommand = ssh -i
+  /home/nuc8/.ssh/github_werner -o IdentitiesOnly=yes`, so future
+  push/pull from this directory uses the right key automatically (no
+  global `~/.ssh/config` change needed).
+- 16 files + 4.7 MB pushed across 2 commits on top of the remote's
+  initial stub. Includes `pooltemperature.factory.bin` (~935 KB
+  pre-built firmware blob — kept on purpose so the repo is flashable
+  without rebuilding; reconsider if commit history grows).
+- Conflict resolved on `README.md`: kept the local 308-line documentation
+  over the remote's 45-byte stub. Remote's `LICENSE` preserved.
+- **First push was rejected** by GitHub (`GH007: push would publish a
+  private email address`) because the `AINxtGenDev` GitHub account has
+  email-privacy enabled. Resolved without changing the GitHub setting:
+  rewrote both new commits via `git filter-branch --env-filter` to use
+  `200944911+AINxtGenDev@users.noreply.github.com` (author name
+  `AINxtGenDev`). The local `user.email` is now this noreply too — keep
+  using it for any future commits in this repo.
+
+**Toolchain — GSD updated 1.38.5 → 1.39.1.**
+Hotfix release. Most relevant fix for this project: `gsd-sdk query
+agent-skills` now emits raw text instead of a JSON-quoted string, so
+subagents spawned in this dir will get correct `<agent_skills>` blocks.
+Also: `/gsd-help` no longer advertises 8 commands removed in #2824
+(skill consolidation) — `/gsd-do` is now `/gsd-progress --do`,
+`/gsd-note` is `/gsd-capture --note`, `/gsd-check-todos` is
+`/gsd-capture --list`, etc. Several skills are now namespaced under
+`gsd-ns-*` parents (context, project, ideate, manage, review, workflow).
+
+**Authoring note for this file.**
+A previous session pasted a verbatim `<system-reminder>` block into this
+checkpoint (likely a copy artifact from the runtime). It was already
+edited out before this session started — flagged here so future-Claude
+doesn't try to "act on" reminders that appear in the file.
 
 ## 2026-04-28 — Battery monitoring added to smoke-test yaml
 
