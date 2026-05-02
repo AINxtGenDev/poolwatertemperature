@@ -3,6 +3,52 @@
 **Last session:** 2026-05-02
 **Working dir:** `/home/nuc8/01_smarthome/01_HomeAssistant/03_esphome/02_pool_watertemperature/esp32_lolin32_lite`
 
+## 2026-05-02 (later) — `HOW-TO-USE-GSD.md` added
+
+User asked for a structured, project-tailored guide on using GSD
+(<https://github.com/gsd-build/get-shit-done>). Wrote
+`HOW-TO-USE-GSD.md` at the repo root.
+
+Key points the guide bakes in for future sessions in this project:
+
+- **Brownfield entry point is `/gsd-map-codebase`**, not
+  `/gsd-new-project`. The latter assumes greenfield.
+- The **production-layer ESPHome build** (Plan F: 3-h sleep, OTA every
+  56th boot, esp-idf framework, multi-AP, pinned DS18B20 ROM,
+  safe_mode, captive_portal) is the one place a real GSD phase pays
+  off. Everything else in the open-items list is hardware steps,
+  trivial config edits (→ `/gsd-fast` / `/gsd-quick`), or debugging
+  (→ `/gsd-debug`).
+- Source-of-truth ESPHome YAML lives in the **docker volume**
+  (`/config/pooltemperature.yaml`), not in this repo. GSD plans that
+  edit YAML must (1) back up inside container, (2) write via
+  `docker exec -i esphome tee`, (3) validate with
+  `docker exec esphome esphome config`, (4) mirror the validated copy
+  into the repo for the commit.
+- `SESSION_CHECKPOINT.md` (human narrative, this file) and
+  `.planning/STATE.md` (GSD machine-readable state) coexist by
+  splitting roles: SESSION_CHECKPOINT for prose summary, GSD docs
+  for structured decisions. After each `/gsd-execute-phase`, append a
+  one-paragraph link-and-summary entry here. Don't duplicate content.
+- Recommended model profile for this project is **`balanced`** (Opus
+  plan, Sonnet execute) — escalate to `quality` only if a phase fails
+  twice.
+- `--minimal` install (~700 system-prompt tokens vs ~12k full) is
+  enough for this project. Pass `--minimal` again on every update or
+  the full skill set comes back.
+- A **concrete first-session script** (§11 of the guide) walks the
+  open production-layer phase: `map-codebase` → `discuss-phase 1` →
+  `plan-phase 1` → `execute-phase 1` → OTA-flash → `verify-work 1` →
+  append SESSION_CHECKPOINT entry. Pre-fills the discuss-phase
+  answers from the 5 blocking questions in the 2026-04-26 entry.
+
+10 project-specific anti-patterns documented (don't `/gsd-fast` on
+secrets/safe_mode/deep-sleep changes; don't run `/gsd-execute-phase`
+without backing up the volume YAML; don't put real secret values in
+planning docs since `.planning/` is committed; etc.).
+
+No code or YAML changed this turn — single-file documentation write.
+
 ## 2026-05-02 — Repo published to GitHub; toolchain bump
 
 **Git sync — first push to public remote.**
