@@ -1,0 +1,42 @@
+# --- Secrets (never commit) ---
+secrets.yaml
+secrets.yml
+*.secret
+*.key
+*.pem
+
+# --- Editor / OS ---
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- PlatformIO / build artifacts ---
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
+firmware/.vscode/
+firmware/.clang_complete
+firmware/.gcc-flags.json
+firmware/lib/readme.txt
+
+# --- ESPHome build artifacts ---
+.esphome/
+build/
+*.elf
+*.map
+
+# --- Home Assistant runtime / private state ---
+homeassistant/.storage/
+homeassistant/secrets.yaml
+homeassistant/known_devices.yaml
+homeassistant/*.db*
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

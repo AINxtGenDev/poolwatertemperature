@@ -1,0 +1,64 @@
+# ============================================================
+#  Dashboard Card for Pool Temperature Monitor
+# ============================================================
+#  Add this to your Lovelace dashboard via "Edit Dashboard" >
+#  "Add Card" > "Manual" and paste the YAML below.
+# ============================================================
+
+# --- Option 1: Simple Entities Card ---
+type: entities
+title: Pool Monitor
+icon: mdi:pool-thermometer
+entities:
+  - entity: sensor.pool_temperature
+    name: Water Temperature
+    icon: mdi:thermometer-water
+  - entity: sensor.pool_monitor_battery
+    name: Monitor Battery
+    icon: mdi:battery
+
+---
+
+# --- Option 2: Rich card with temperature history graph ---
+type: vertical-stack
+cards:
+  - type: heading
+    heading: Pool Temperature
+    heading_style: title
+    icon: mdi:pool-thermometer
+
+  - type: horizontal-stack
+    cards:
+      - type: tile
+        entity: sensor.pool_temperature
+        name: Water Temp
+        icon: mdi:thermometer-water
+        color: blue
+
+      - type: tile
+        entity: sensor.pool_monitor_battery
+        name: Battery
+        icon: mdi:battery
+        color: green
+
+  - type: history-graph
+    entities:
+      - entity: sensor.pool_temperature
+        name: Temperature
+    hours_to_show: 168   # 7 days
+    title: Last 7 Days
+
+---
+
+# --- Option 3: Gauge card for quick glance ---
+type: gauge
+entity: sensor.pool_temperature
+name: Pool Temperature
+unit: "°C"
+min: 0
+max: 40
+severity:
+  green: 24
+  yellow: 18
+  red: 0
+needle: true

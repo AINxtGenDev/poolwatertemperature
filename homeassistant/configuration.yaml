@@ -1,0 +1,30 @@
+# ============================================================
+#  Home Assistant — Pool Temperature Monitor Configuration
+# ============================================================
+#  If you use MQTT auto-discovery (enabled by default in HA),
+#  the sensors will appear automatically — no manual config needed.
+#
+#  The firmware publishes HA-compatible discovery messages, so
+#  entities "sensor.pool_temperature" and "sensor.pool_monitor_battery"
+#  are created on first boot.
+#
+#  Below is OPTIONAL manual configuration if auto-discovery is
+#  disabled, plus useful automations and dashboard cards.
+# ============================================================
+
+# --- OPTIONAL: Manual MQTT sensor config (only if auto-discovery is OFF) ---
+# mqtt:
+#   sensor:
+#     - name: "Pool Temperature"
+#       unique_id: pool_temp_sensor
+#       state_topic: "homeassistant/sensor/pool_temp/state"
+#       unit_of_measurement: "°C"
+#       device_class: temperature
+#       value_template: "{{ value_json.temperature }}"
+#
+#     - name: "Pool Monitor Battery"
+#       unique_id: pool_temp_battery
+#       state_topic: "homeassistant/sensor/pool_battery/state"
+#       unit_of_measurement: "%"
+#       device_class: battery
+#       value_template: "{{ value_json.battery }}"

@@ -1,0 +1,75 @@
+# ============================================================
+#  Automations for Pool Temperature Monitor
+# ============================================================
+#  Add these to your automations.yaml or via the HA UI.
+# ============================================================
+
+# --- Alert when battery drops below 20% ---
+- id: pool_monitor_low_battery
+  alias: "Pool Monitor - Low Battery Alert"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pool_monitor_battery
+      below: 20
+  condition:
+    # Only alert once per day
+    - condition: template
+      value_template: >
+        {{ (as_timestamp(now()) - as_timestamp(
+            state_attr('automation.pool_monitor_low_battery', 'last_triggered')
+            | default(0))) > 86400 }}
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Pool Monitor Battery Low"
+        message: >
+          Pool temperature monitor battery is at
+          {{ states('sensor.pool_monitor_battery') }}%.
+          Please recharge or replace the battery soon.
+        notification_id: pool_battery_low
+    # Optional: Send mobile notification
+    # - service: notify.mobile_app_your_phone
+    #   data:
+    #     title: "Pool Monitor Battery Low"
+    #     message: "Battery at {{ states('sensor.pool_monitor_battery') }}%"
+
+# --- Alert when sensor goes offline (no update for 7 hours) ---
+- id: pool_monitor_offline
+  alias: "Pool Monitor - Offline Alert"
+  trigger:
+    - platform: state
+      entity_id: sensor.pool_temperature
+      to: "unavailable"
+      for:
+        hours: 7
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Pool Monitor Offline"
+        message: >
+          The pool temperature sensor has not reported for over 7 hours.
+          Check battery level and WiFi signal.
+        notification_id: pool_offline
+
+# --- Alert when pool temperature is ideal for swimming ---
+- id: pool_temp_ideal
+  alias: "Pool - Temperature Ideal for Swimming"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pool_temperature
+      above: 24
+  condition:
+    - condition: time
+      after: "08:00:00"
+      before: "20:00:00"
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Pool Ready!"
+        message: >
+          Pool water temperature is {{ states('sensor.pool_temperature') }}°C
+          — great for swimming!
+        notification_id: pool_ready
+
+# --- Log temperature to long-term statistics ---
+# (HA does this automatically for sensors with device_class: temperature)
