@@ -1,0 +1,134 @@
+# Smoke-test config: verify WiFi + DS18B20 wiring only.
+# 2026-04-28: + battery voltage / percentage on GPIO35 (1 MΩ / 1 MΩ divider).
+# Once everything is verified, layer back in deep sleep, multi-AP, etc.
+
+substitutions:
+  device_name: "pooltemperature"
+  friendly_name: "Pooltemperature"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: 600
+    then:
+      - logger.log:
+          level: INFO
+          format: "${friendly_name} booted — smoke test build"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+  baud_rate: 0
+
+api:
+  encryption:
+    key: !secret pooltemperature_key
+  reboot_timeout: 15min
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.1.86
+    gateway: 192.168.1.254
+    subnet: 255.255.255.0
+    dns1: 192.168.1.35
+  power_save_mode: NONE
+  reboot_timeout: 5min
+
+# Always-on power rail for the DS18B20 (red wire on GPIO16).
+# Internal switch — not exposed to HA. Production firmware will
+# toggle this around deep-sleep cycles.
+switch:
+  - platform: gpio
+    pin: GPIO16
+    id: ds18b20_power
+    restore_mode: ALWAYS_ON
+    internal: true
+
+# DS18B20 OneWire bus on GPIO4 (yellow data wire, 4.7 kΩ pull-up to 3V3).
+one_wire:
+  - platform: gpio
+    pin: GPIO4
+
+sensor:
+  - platform: dallas_temp
+    name: "Pool Water Temperature"
+    update_interval: 10s
+    resolution: 12
+
+  # Battery cell voltage via 1 MΩ / 1 MΩ divider on GPIO35 (ADC1).
+  # ESP32 returns calibrated millivolts since 2021.11 — no manual factor.
+  # 12 dB attenuation → ~3.1 V full scale at the pin; ×2 multiplier
+  # restores the actual cell voltage (max ~4.2 V).
+  - platform: adc
+    pin: GPIO35
+    name: "${friendly_name} Battery Voltage"
+    id: vbat_raw
+    update_interval: 60s
+    attenuation: 12db
+    samples: 10
+    sampling_mode: avg
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    filters:
+      - multiply: 2.0
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 5
+      - heartbeat: 300s
+
+  # Linear NCR18650B approximation: 4.2 V → 100 %, 3.2 V → 0 %.
+  # Refine later with a real discharge curve once the device is in the field.
+  - platform: template
+    name: "${friendly_name} Battery Level"
+    id: vbat_pct
+    update_interval: 60s
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+    state_class: measurement
+    lambda: |-
+      float v = id(vbat_raw).state;
+      if (isnan(v)) return NAN;
+      float pct = (v - 3.2f) / (4.2f - 3.2f) * 100.0f;
+      if (pct > 100.0f) pct = 100.0f;
+      if (pct <   0.0f) pct =   0.0f;
+      return pct;
+    filters:
+      - heartbeat: 300s
+
+  - platform: uptime
+    name: "${friendly_name} Uptime"
+    entity_category: diagnostic
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "${friendly_name} Connected SSID"
+      entity_category: diagnostic
+    bssid:
+      name: "${friendly_name} Connected BSSID"
+      entity_category: diagnostic
+
+button:
+  - platform: restart
+    name: "${friendly_name} Restart"
+    entity_category: config
+

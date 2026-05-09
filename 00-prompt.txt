@@ -1,0 +1,20 @@
+
+
+https://github.com/AINxtGenDev/poolwatertemperature
+
+/home/nuc8/.ssh/github_werner
+
+
+/esphome
+/home-assistant
+
+project: Pool Temperature Monitor
+A battery-powered ESP32 that measures the pool water temperature every hour using a DS18B20 sensor and transmits the data to Home Assistant via Native API over Wi-Fi.
+It wakes up from deep sleep every hour, transmits the data in about 10 seconds, and then enters deep sleep mode again. A single 18650 cell - full charged 4.2 volt,
+the 4.2 volts were reliably measured using a meter.
+Also consider the possibility of updating the firmware later if changes are needed, without adding additional hardware components such as a button to a GPIO pin;
+perhaps an internal reboot counter is a good approach, e.g., remaining available for 2 minutes after every e.g. 10th reboot—I think that’s enough time to install new firmware.
+A reboot occurs when I press the RST button on my Lolin32 Lite MCU or when I replace the battery or i restart the device on behalf a software restart button within home assistant.
+A must-have requirement is that the system must function for 9 months without a battery replacement; if that is not possible, extend the measurement intervals to 2 hours.
+
+
