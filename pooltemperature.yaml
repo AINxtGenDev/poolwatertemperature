@@ -1,20 +1,72 @@
-# Smoke-test config: verify WiFi + DS18B20 wiring only.
-# 2026-04-28: + battery voltage / percentage on GPIO35 (1 MΩ / 1 MΩ divider).
-# Once everything is verified, layer back in deep sleep, multi-AP, etc.
+# Pool Temperature Monitor — production firmware (v2.0.0)
+# Hardware: Lolin32 Lite + NCR18650B (single 18650 cell)
+# Wiring:
+#   GPIO4   DS18B20 data (yellow), 4.7 kΩ pull-up to 3V3
+#   GPIO16  DS18B20 power rail (red), switched
+#   GPIO35  battery voltage via 1 MΩ : 1 MΩ divider (ADC1)
+#
+# Operation:
+#   Wake every 2 h, publish water temperature + battery to HA, sleep.
+#   Awake window ~5–10 s/cycle. Targets ≥9 months on a single charge.
+#
+# OTA recovery (no GPIO button required):
+#   1. HA action `enter_ota_mode` → next wake stays awake 2 min.
+#   2. Press RST 10 times → next wake stays awake 2 min.
+#      Counter persists in NVS (survives battery swap). Only "real"
+#      reboots count; deep-sleep wakes do not.
+#   3. safe_mode catches any OTA that crashes within 1 min — opens a
+#      permanent OTA listener until reflashed.
 
 substitutions:
   device_name: "pooltemperature"
   friendly_name: "Pooltemperature"
+  sleep_duration: "2h"
+  ota_window_duration: "2min"
 
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  comment: "Battery-powered pool water temperature (Lolin32 Lite + DS18B20 + NCR18650)"
+  min_version: 2026.4.0
+  project:
+    name: "homelab.pooltemperature"
+    version: "2.0.0"
   on_boot:
-    priority: 600
-    then:
-      - logger.log:
-          level: INFO
-          format: "${friendly_name} booted — smoke test build"
+    # Earliest priority: increment reboot counter if this was a real
+    # reboot (RST button, battery swap, HA software-restart, panic,
+    # brownout). Deep-sleep wakes do NOT increment.
+    - priority: 800
+      then:
+        - lambda: |-
+            esp_reset_reason_t r = esp_reset_reason();
+            ESP_LOGI("boot", "Reset reason code: %d", r);
+            if (r != ESP_RST_DEEPSLEEP) {
+              id(reboot_count) += 1;
+              ESP_LOGI("boot", "Real reboot — counter now %u", id(reboot_count));
+            } else {
+              ESP_LOGI("boot", "Deep-sleep wake — counter unchanged at %u", id(reboot_count));
+            }
+    # Latest priority: dispatch to the right script.
+    - priority: -100
+      then:
+        - if:
+            condition:
+              lambda: |-
+                bool counter_window = (id(reboot_count) > 0
+                                       && id(reboot_count) % 10 == 0);
+                bool ha_request     = id(ota_request_pending);
+                if (ha_request) {
+                  ESP_LOGI("boot", "OTA window: HA-requested via enter_ota_mode");
+                } else if (counter_window) {
+                  ESP_LOGI("boot", "OTA window: %u-th real reboot", id(reboot_count));
+                }
+                return counter_window || ha_request;
+            then:
+              # consume the one-shot HA flag immediately
+              - lambda: 'id(ota_request_pending) = false;'
+              - script.execute: ota_window
+            else:
+              - script.execute: read_and_publish
 
 esp32:
   board: esp32dev
@@ -23,31 +75,75 @@ esp32:
 
 logger:
   level: INFO
-  baud_rate: 0
+  baud_rate: 0   # serial UART off — frees pins, saves ~1 mA awake
+  logs:
+    sensor: WARN
+    api: WARN
 
 api:
   encryption:
     key: !secret pooltemperature_key
   reboot_timeout: 15min
+  actions:
+    # HA-callable: opens OTA window on the NEXT wake (saved to NVS).
+    - action: enter_ota_mode
+      then:
+        - lambda: 'id(ota_request_pending) = true;'
+        - logger.log: "HA requested OTA mode for next wake — flag persisted to NVS"
 
 ota:
   - platform: esphome
     password: !secret ota_password
+    on_begin:
+      - deep_sleep.prevent: ds
+    on_error:
+      - deep_sleep.allow: ds
+
+safe_mode:
+  num_attempts: 10
+  reboot_timeout: 5min
+  boot_is_good_after: 1min
 
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  networks:
+    - ssid: !secret outdoor_wifi_ssid
+      password: !secret outdoor_wifi_password
+      priority: 10
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      priority: 5
+  fast_connect: true
+  power_save_mode: NONE
+  output_power: 17.0
   manual_ip:
     static_ip: 192.168.1.86
     gateway: 192.168.1.254
     subnet: 255.255.255.0
     dns1: 192.168.1.35
-  power_save_mode: NONE
-  reboot_timeout: 5min
+  reboot_timeout: 2min
+  enable_btm: true
+  enable_rrm: true
 
-# Always-on power rail for the DS18B20 (red wire on GPIO16).
-# Internal switch — not exposed to HA. Production firmware will
-# toggle this around deep-sleep cycles.
+# No captive_portal: battery device is unreachable when stuck.
+# safe_mode + reboot-counter OTA window are the recovery paths.
+
+globals:
+  # Counts only "real" reboots (POWERON / SW / PANIC / BROWNOUT / RST).
+  # Deep-sleep wakes do NOT increment. Persisted to NVS so it survives
+  # battery swap.
+  - id: reboot_count
+    type: uint32_t
+    restore_value: true
+    initial_value: '0'
+  # One-shot flag set by HA action enter_ota_mode; consumed on next wake.
+  - id: ota_request_pending
+    type: bool
+    restore_value: true
+    initial_value: 'false'
+
+# DS18B20 power rail. The pin goes LOW automatically when the ESP32
+# enters deep sleep (no RTC GPIO config), killing sensor power until
+# the next wake.
 switch:
   - platform: gpio
     pin: GPIO16
@@ -55,28 +151,28 @@ switch:
     restore_mode: ALWAYS_ON
     internal: true
 
-# DS18B20 OneWire bus on GPIO4 (yellow data wire, 4.7 kΩ pull-up to 3V3).
 one_wire:
   - platform: gpio
     pin: GPIO4
 
 sensor:
   - platform: dallas_temp
+    address: 0x8448695309646128
     name: "Pool Water Temperature"
-    update_interval: 10s
-    resolution: 12
+    id: pool_temp
+    update_interval: never   # explicit trigger from boot script
+    resolution: 12           # 12-bit, 750 ms conversion
+    accuracy_decimals: 2
+    filters:
+      - filter_out: NaN
 
-  # Battery cell voltage via 1 MΩ / 1 MΩ divider on GPIO35 (ADC1).
-  # ESP32 returns calibrated millivolts since 2021.11 — no manual factor.
-  # 12 dB attenuation → ~3.1 V full scale at the pin; ×2 multiplier
-  # restores the actual cell voltage (max ~4.2 V).
   - platform: adc
-    pin: GPIO35
+    pin: GPIO35              # ADC1 — works with WiFi active
     name: "${friendly_name} Battery Voltage"
     id: vbat_raw
-    update_interval: 60s
-    attenuation: 12db
-    samples: 10
+    update_interval: never
+    attenuation: 12db        # ~3.1 V full scale at pin
+    samples: 16
     sampling_mode: avg
     unit_of_measurement: "V"
     accuracy_decimals: 3
@@ -84,18 +180,15 @@ sensor:
     state_class: measurement
     entity_category: diagnostic
     filters:
-      - multiply: 2.0
-      - sliding_window_moving_average:
-          window_size: 5
-          send_every: 5
-      - heartbeat: 300s
+      - multiply: 2.0        # undo 1 MΩ : 1 MΩ divider
 
-  # Linear NCR18650B approximation: 4.2 V → 100 %, 3.2 V → 0 %.
-  # Refine later with a real discharge curve once the device is in the field.
+  # NCR18650B SOC, 5-point linear curve from spec:
+  #   100% → 4.100V, 75% → 3.875V, 50% → 3.650V, 25% → 3.425V, 0% → 3.200V
+  # Spacing is uniform (0.225 V per 25 %) so the curve collapses to linear.
   - platform: template
     name: "${friendly_name} Battery Level"
     id: vbat_pct
-    update_interval: 60s
+    update_interval: never
     unit_of_measurement: "%"
     accuracy_decimals: 0
     device_class: battery
@@ -103,17 +196,42 @@ sensor:
     lambda: |-
       float v = id(vbat_raw).state;
       if (isnan(v)) return NAN;
-      float pct = (v - 3.2f) / (4.2f - 3.2f) * 100.0f;
+      float pct = (v - 3.200f) / (4.100f - 3.200f) * 100.0f;
       if (pct > 100.0f) pct = 100.0f;
       if (pct <   0.0f) pct =   0.0f;
       return pct;
-    filters:
-      - heartbeat: 300s
+
+  - platform: wifi_signal
+    name: "${friendly_name} WiFi Signal"
+    id: wifi_rssi
+    update_interval: never
+    entity_category: diagnostic
 
   - platform: uptime
     name: "${friendly_name} Uptime"
-    entity_category: diagnostic
+    type: seconds
     update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: template
+    name: "${friendly_name} Reboot Count"
+    id: reboot_count_sensor
+    update_interval: never
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    lambda: 'return (float) id(reboot_count);'
+
+  # 0 = device is currently in the OTA window; 1..9 = N more real
+  # reboots needed before the next OTA window opens.
+  - platform: template
+    name: "${friendly_name} Wakes Until OTA Window"
+    id: wakes_to_ota
+    update_interval: never
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    lambda: |-
+      uint32_t mod = id(reboot_count) % 10;
+      return (float) ((mod == 0) ? 0 : (10 - mod));
 
 text_sensor:
   - platform: wifi_info
@@ -127,8 +245,96 @@ text_sensor:
       name: "${friendly_name} Connected BSSID"
       entity_category: diagnostic
 
+  - platform: version
+    name: "${friendly_name} ESPHome Version"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "${friendly_name} Reset Reason"
+    id: reset_reason_text
+    update_interval: never
+    entity_category: diagnostic
+    lambda: |-
+      esp_reset_reason_t r = esp_reset_reason();
+      switch (r) {
+        case ESP_RST_POWERON:   return std::string("power_on");
+        case ESP_RST_EXT:       return std::string("external_reset");
+        case ESP_RST_SW:        return std::string("software_reset");
+        case ESP_RST_PANIC:     return std::string("panic");
+        case ESP_RST_INT_WDT:   return std::string("interrupt_watchdog");
+        case ESP_RST_TASK_WDT:  return std::string("task_watchdog");
+        case ESP_RST_WDT:       return std::string("other_watchdog");
+        case ESP_RST_DEEPSLEEP: return std::string("deep_sleep_wake");
+        case ESP_RST_BROWNOUT:  return std::string("brownout");
+        case ESP_RST_SDIO:      return std::string("sdio_reset");
+        default:                return std::string("unknown");
+      }
+
 button:
   - platform: restart
     name: "${friendly_name} Restart"
     entity_category: config
+
+deep_sleep:
+  id: ds
+  sleep_duration: ${sleep_duration}
+  # No run_duration — sleep is triggered manually by the scripts so
+  # we control awake time precisely.
+
+script:
+  # Normal cycle: wait for API, publish all sensor values, sleep.
+  - id: read_and_publish
+    mode: single
+    then:
+      - logger.log: "Awake — waiting for API connection (timeout 30 s)"
+      - wait_until:
+          condition:
+            api.connected:
+          timeout: 30s
+      - if:
+          condition:
+            api.connected:
+          then:
+            - logger.log: "API connected — taking readings"
+            - component.update: pool_temp
+            - component.update: vbat_raw
+            - delay: 1500ms                 # DS18B20 conversion + ADC settle
+            - component.update: vbat_pct
+            - component.update: reboot_count_sensor
+            - component.update: wakes_to_ota
+            - component.update: wifi_rssi
+            - component.update: reset_reason_text
+            - delay: 2s                     # let API drain pending publishes
+            - logger.log:
+                format: "Readings published — entering deep sleep for ${sleep_duration}"
+          else:
+            - logger.log: "API never connected — sleeping anyway to conserve battery"
+      - deep_sleep.enter: ds
+
+  # OTA window: stay awake long enough for an OTA flash.
+  # Triggered by either reboot_count % 10 == 0 OR ota_request_pending.
+  - id: ota_window
+    mode: single
+    then:
+      - logger.log:
+          format: "OTA window open — staying awake ${ota_window_duration}"
+      - wait_until:
+          condition:
+            api.connected:
+          timeout: 30s
+      - if:
+          condition:
+            api.connected:
+          then:
+            - component.update: pool_temp
+            - component.update: vbat_raw
+            - delay: 1500ms
+            - component.update: vbat_pct
+            - component.update: reboot_count_sensor
+            - component.update: wakes_to_ota
+            - component.update: wifi_rssi
+            - component.update: reset_reason_text
+      - delay: ${ota_window_duration}
+      - logger.log: "OTA window expired — entering deep sleep for ${sleep_duration}"
+      - deep_sleep.enter: ds
 

@@ -1,7 +1,171 @@
 # Session Checkpoint — Pool Temperature Monitor
 
-**Last session:** 2026-05-02
+**Last session:** 2026-05-10
 **Working dir:** `/home/nuc8/01_smarthome/01_HomeAssistant/03_esphome/02_pool_watertemperature/esp32_lolin32_lite`
+
+## 2026-05-10 — Production-rewrite plan delivered (no code yet)
+
+Reviewed the current `pooltemperature.yaml` (smoke-test build: arduino
+framework, single SSID `Aruba_HPE_WLAN`, always-on, GPIO16 DS18B20
+power switch wired but `ALWAYS_ON`, no deep_sleep, no safe_mode, no
+fast_connect, no min_version, linear 4.2→3.2 V battery curve) against
+the ESPHome production checklist and the user's brief.
+
+Delivered as a structured plan (no YAML written this turn):
+
+1. **Battery feasibility analysis.** Lolin32 Lite ~150 µA sleep,
+   NCR18650B usable ~3000 mAh above 3.2 V cutoff. 1-hour interval is
+   *plausible* (1875–2680 mAh / 9 mo) under optimistic-to-realistic
+   assumptions, but *fails* (~4000 mAh) if awake window stretches to
+   10 s with 150 mA average. 2-hour fallback is comfortably safe
+   (~2000 mAh). Plan: build for 1 h, measure for a week, fall back
+   to 2 h if real consumption projects > 2700 mAh / 9 mo.
+
+2. **Reliability pillars to add.** `min_version`, `safe_mode` as
+   separate component, `fast_connect: true`, BSSID pinning,
+   `output_power: 17dB`, multi-AP fallback, NCR18650B 5-point curve
+   (4.1→3.2 V, linear-spaced), DS18B20 address pinning, diagnostic
+   sensors (RSSI, reset_reason, reboot_count, version), sensors
+   moved to `update_interval: never` + script-driven read in
+   `on_boot`. Skip captive_portal on battery device.
+
+3. **OTA recovery — three layered paths:**
+   - **NVS-persisted reboot counter** (`globals` with
+     `restore_value: true`) survives battery swap. Differentiates
+     `ESP_RST_DEEPSLEEP` (don't increment) from
+     `ESP_RST_POWERON/SW/PANIC/BROWNOUT` (increment). Every 10th
+     real reboot → skip deep sleep, stay awake 2 min for OTA.
+   - **HA-callable action `enter_ota_mode`** sets a one-shot flag
+     for next-wake OTA window — convenient routine path.
+   - **`safe_mode`** independent crash-loop recovery — bad OTA that
+     crashes within 1 min auto-boots into permanent OTA listener.
+
+4. **Phased implementation, atomic commits, verifiable per phase:**
+   (1) pin DS18B20 address; (2) reliability scaffolding still
+   always-on; (3) framework switch arduino → esp-idf; (4) NCR
+   battery curve; (5) reboot counter + OTA window; (6) HA action
+   `enter_ota_mode`; (7) deep_sleep enable + script-driven publish;
+   (8) one-week field measurement → keep 1 h or fall back to 2 h.
+
+5. **Open questions surfaced for user before any code:**
+   - Which AP is in range at the pool location? Current config uses
+     `Aruba_HPE_WLAN` (house). Likely candidates from secrets:
+     `Outdoor_AP`, `Poolschacht`. Battery life depends critically
+     on RSSI / time-to-associate.
+   - Framework switch arduino → esp-idf? Recommended for stability
+     and power on deep-sleep cycles, but bigger change. User to
+     confirm.
+
+Status: plan delivered, awaiting user reply on AP choice + framework
+preference. No files modified except this checkpoint.
+
+### 2026-05-10 (later) — User locked in two inputs
+
+- **Cadence committed to 2 hours** (skip the "1 h then measure" trial
+  step). Battery budget now ~2000 mAh / 9 months under realistic
+  assumptions — comfortably below 3000 mAh usable. No fallback step
+  needed.
+- **DS18B20 address pinned: `0x8448695309646128`** (DS18B20 on the
+  GPIO4 1-Wire bus, captured from current firmware boot log).
+
+Phase plan collapses from 8 steps to 7 (drop former phase 8
+field-measurement decision). Still awaiting AP choice + framework
+decision; defaults proposed: keep `Aruba_HPE_WLAN` primary +
+`Outdoor_AP` fallback, stay on `arduino` (esp-idf less compelling
+once cadence dropped to 2 h).
+
+### 2026-05-10 (later) — All decisions locked + production rewrite committed
+
+User confirmed:
+- **Primary AP: `Outdoor_AP` (priority 10)**, fallback
+  `Aruba_HPE_WLAN` (priority 5). Both on same `192.168.1.0/24`,
+  static IP `192.168.1.86` retained.
+- Framework: stayed on `arduino` (no objection raised to default).
+
+Wrote production `pooltemperature.yaml` (v2.0.0) replacing the
+smoke-test build. Single comprehensive rewrite, ESPHome 2026.4.5
+validated `Configuration is valid!` after one fix:
+
+- **Hit 2026.4.x deprecation:** `num_attempts:` is no longer valid
+  on the OTA platform — moved entirely to the `safe_mode:` component.
+  Removed it from `ota:` (kept on `safe_mode:` where it now lives).
+
+What's in v2.0.0 (vs smoke-test build):
+- `min_version: 2026.4.0`, `project.version: "2.0.0"`
+- `safe_mode:` as separate top-level component
+- WiFi `networks:` list (Outdoor_AP/Aruba), `fast_connect: true`,
+  `output_power: 17.0`, `wifi.reboot_timeout: 2min`,
+  `enable_btm/rrm: true`. No `captive_portal` (battery device).
+- DS18B20 address pinned to `0x8448695309646128`,
+  `update_interval: never`, triggered from script.
+- NCR18650B 5-point linear SOC curve (4.1 V → 100 %, 3.2 V → 0 %).
+- Globals (NVS-persisted, survive battery swap):
+  `reboot_count: uint32_t`, `ota_request_pending: bool`.
+- API action `enter_ota_mode` — HA-callable, sets one-shot OTA flag.
+- `deep_sleep:` (id `ds`, sleep_duration 2h, no run_duration —
+  manual control via script).
+- Two scripts:
+  - `read_and_publish` (mode: single) — wait_until api.connected
+    timeout 30 s → component.update on temp+vbat → 1.5 s wait
+    (DS18B20 conversion) → update derived sensors → 2 s drain →
+    deep_sleep.enter
+  - `ota_window` (mode: single) — same publish flow then
+    `delay: 2min` then deep_sleep.enter
+- `on_boot` priority 800: increment `reboot_count` IFF
+  `esp_reset_reason() != ESP_RST_DEEPSLEEP` (deep-sleep wakes don't
+  count).
+- `on_boot` priority -100: dispatcher — if
+  `(reboot_count > 0 && reboot_count % 10 == 0) ||
+   ota_request_pending` → consume flag, run `ota_window`; else run
+  `read_and_publish`.
+- OTA platform: `on_begin: deep_sleep.prevent`,
+  `on_error: deep_sleep.allow` (prevent bricking mid-upload).
+- Diagnostic sensors: wifi_signal, uptime, reset_reason text,
+  reboot_count, wakes_to_ota, ESPHome version, wifi_info trio.
+
+NOT done (left to user):
+- `git commit` — file is uncommitted in working tree.
+- Flash to device. Recommended: OTA from current always-on smoke
+  firmware (one-shot transition). After sleep, OTA only possible
+  during 10-min/HA-triggered windows.
+- Bench-test counter logic before deploying to pool: 10× RST
+  should open a 2-min OTA window; HA action `enter_ota_mode`
+  should open one on next wake.
+
+Container backup: `/config/pooltemperature.yaml.bak.<timestamp>`.
+
+## 2026-05-09 — `HOW-TO-USE-GSD.md` refreshed for upstream GSD v1.40/1.41/1.51
+
+Updated the project's GSD how-to in place:
+
+- Folded in v1.40's six namespace meta-skills (`/gsd-workflow`,
+  `/gsd-project`, `/gsd-quality`, `/gsd-context`, `/gsd-manage`,
+  `/gsd-ideate`) — now the recommended router-style entry points.
+- Replaced references to deleted micro-skills:
+  `/gsd-research-phase` → `/gsd-plan-phase --research-phase N`,
+  `/gsd-do` / `/gsd-next` → `/gsd-progress --do` / `--next`,
+  `/gsd-code-review-fix` → `/gsd-code-review --fix`.
+- Added `/gsd-edit-phase`, `/gsd-plan-review-convergence`,
+  `/gsd-execute-phase --wave N`, and `/gsd-health --context` to the
+  cheat-sheet (§10).
+- Skill-surface count corrected from "86" to "59 (post-1.40
+  consolidation)" in the `--minimal` install paragraph.
+- Mentioned v1.51's *Package Legitimacy Gate* (slopcheck) — mostly
+  irrelevant for firmware-only phases here, but flagged so it doesn't
+  surprise us if a future phase pulls a Python helper.
+- New §12: a green-field starter walkthrough for "Pool Temperature
+  Monitor v1" with the user-stated brief baked in (1 h cadence,
+  10th-boot OTA window, no GPIO button, NVS-persisted boot counter,
+  9-month battery hard requirement, 2 h fallback if math fails). Also
+  includes the energy-budget math GSD's planner must include and a
+  7-step UAT checklist for `/gsd-verify-work`.
+
+§11's older "first session" script (Plan F: 3 h sleep, OTA every 56th
+boot) was kept *as-is* — it captures the originally-discussed plan
+that was carried in this checkpoint. The new §12 captures the
+**revised** brief from 2026-05-09 (1 h sleep, 10th-boot OTA). If we
+commit to the §12 brief, archive §11 by `/gsd-edit-phase`-ing the
+roadmap and updating PROJECT.md to match.
 
 ## 2026-05-02 (later) — `HOW-TO-USE-GSD.md` added
 
