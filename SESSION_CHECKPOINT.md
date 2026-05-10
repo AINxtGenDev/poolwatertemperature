@@ -1,7 +1,140 @@
 # Session Checkpoint — Pool Temperature Monitor
 
-**Last session:** 2026-05-10
+**Last session:** 2026-05-10 (afternoon)
 **Working dir:** `/home/nuc8/01_smarthome/01_HomeAssistant/03_esphome/02_pool_watertemperature/esp32_lolin32_lite`
+
+## 2026-05-10 (afternoon) — v2.0.1 hotfix: safe_mode rollback resolved; battery reading still TBD
+
+### What happened today (after morning v2.0.0 flash)
+
+Flashed v2.0.0 → device booted, then **safe_mode auto-rolled back to the
+previous always-on firmware** within minutes. Wireless log captured the
+smoking gun:
+
+```
+[W][safe_mode:058]: OTA rollback detected! Rolled back from partition 'app0'
+[W][safe_mode:059]: The device reset before the boot was marked successful
+```
+
+Confirming clues in the log:
+- Sensor update intervals showed `10.0s` / `60.0s` (smoke-test values),
+  not v2.0.0's `never`
+- No `deep_sleep:` block in the component setup list
+- `safe_mode: Successful after: 60s` was active
+
+### Root cause (my bug in v2.0.0)
+
+`safe_mode.boot_is_good_after: 1min` (60 s) is longer than the awake
+window (~5–10 s). Every normal `deep_sleep.enter` looked to safe_mode
+like "device reset before boot marked successful." After
+`num_attempts: 10` such "fast reboots," safe_mode triggered partition
+rollback. v2.0.0 never had a chance to stabilise.
+
+Classic safe_mode ↔ deep_sleep interaction trap. **Generalisable
+ESPHome rule worth remembering:** for any `deep_sleep` device,
+`safe_mode.boot_is_good_after` MUST be shorter than the awake window
+or rollback fires.
+
+### Fix (v2.0.1, commit `51d3fc1`)
+
+```yaml
+safe_mode:
+  num_attempts: 10
+  reboot_timeout: 5min
+  boot_is_good_after: 1s   # was 1min — must be < awake window
+```
+
+ESPHome setup completes in ~500 ms (verified from log). 1 s timer
+fires at ~1.5 s after boot. Earliest possible sleep is ~4.1 s
+(delays in script alone sum to 3.5 s + sensor reads + wait_until). 
+Margin: 2.6 s.
+
+Also bumped `project.version` `2.0.0` → `2.0.1` and updated the
+header comment to match (user spotted the comment was stale).
+
+### Verification (post-flash)
+
+User flashed v2.0.1. Log captured:
+```
+[I][app:156]: Project homelab.pooltemperature version 2.0.1
+[I][deep_sleep:057]: Beginning sleep
+[I][deep_sleep:059]: Sleeping for 7200000000us   ← 2 h, correct
+INFO Processing expected disconnect from ESPHome API
+```
+
+✓ v2.0.1 running (no rollback)
+✓ deep_sleep component active (was missing in v2.0.0 log)
+✓ 2 h cadence confirmed
+✓ API disconnect = device asleep
+
+The 11.246 s "Successfully connected" delay before the boot log
+appeared is normal — log tool reconnect lag after OTA. The "missing"
+`Real reboot — counter now N` and `Awake — waiting for API` lines
+happened during that gap, before the log connection re-established.
+
+### Open issue picked up at end of session — battery reading wrong
+
+User reported "battery level and battery voltage does not be correct"
+after v2.0.1 deployed. Showed me their old (working) ADC config from
+the smoke-test build. **Could not finish diagnosing today — three
+questions sent, awaiting answers tomorrow:**
+
+1. What value is HA actually showing for `Battery Voltage`?
+   - If ~ballpark cell voltage but jumpy → software (multi-read in
+     script, average within wake)
+   - If ~0.18 / 0.37 V or wildly off → hardware (no cell, divider
+     unsoldered, 1N5817 in pigtail blocking path, GPIO35 wire loose)
+2. Is a real charged NCR18650B in the JST pigtail, or USB-only test?
+   (USB-only with no cell → BAT floats → divider reads garbage; was
+   the symptom in the v2.0.0 log too: `Voltage=0.1840V`.)
+3. Multimeter reading at GPIO35 pin → should be ½ × Vcell ≈ 2 V for
+   a 4 V cell.
+
+**Important for next session — why I did NOT just port the old
+filters:** in deep-sleep mode, `sliding_window_moving_average:
+window_size: 5, send_every: 5` is actively WORSE than v2.0.1's
+single-shot read. With `update_interval: never` and one reading per
+wake, the filter would accumulate one reading per 2 h → publish only
+every 10 h with samples 0.5 h apart. Internal `samples: 16` already
+provides per-call averaging. The right deep-sleep equivalent is to
+take multiple `component.update: vbat_raw` calls within a single
+wake (with small delays) and let the filter average them — but only
+worth doing if the readings are noisy. If they're flat-wrong (~0.18 V),
+no amount of averaging fixes it.
+
+### State at end of session
+
+- v2.0.1 flashed, sleeping, on `Outdoor_AP` priority WiFi (or Aruba
+  fallback). Static IP `192.168.1.86`. Next wake ~2 h after each
+  sleep entry.
+- Container `/config/pooltemperature.yaml` byte-identical to host
+  repo (verified via `docker exec -i esphome diff /config/... -`).
+- Git: clean except for pre-existing modifications to `00-prompt.txt`
+  and `HOW-TO-USE-GSD.md` (uncommitted, predate this session, NOT
+  touched in any of today's work).
+- Hardware: battery wiring needs validation (likely USB-only test
+  causing the 0.18 V reading; confirm with a real cell).
+
+### Resume tomorrow with
+
+1. Answer the three diagnostic questions above (HA value, real cell
+   connected y/n, multimeter at GPIO35).
+2. Based on answer:
+   - **Hardware path:** check 1 MΩ resistors, 1N5817 orientation, JST
+     continuity. No firmware change needed.
+   - **Software path (only if hardware is fine):** add a 200 ms
+     settling delay before `component.update: vbat_raw`, and/or take
+     3–5 readings 100 ms apart within the wake script and average.
+3. Once battery reading is correct, exercise the OTA recovery paths
+   on the bench:
+   - 10× RST → expect `OTA window: 10-th real reboot` and 2 min
+     stay-awake
+   - HA action `esphome.pooltemperature_enter_ota_mode` → expect
+     `OTA window: HA-requested via enter_ota_mode` on next wake
+4. Field deployment to the pool when bench tests pass and 1N5817 +
+   100 nF caps are soldered per the BOM.
+
+
 
 ## 2026-05-10 — Production-rewrite plan delivered (no code yet)
 
