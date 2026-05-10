@@ -64,66 +64,107 @@ Targets ≥9 months on a single charged NCR18650B above the 3.2 V cutoff.
 
 ### Why these numbers and not 2+ years
 
-The Lolin32 Lite has a low-quiescent LDO and no USB-UART chip, giving
-~150 µA in deep sleep — roughly 15× better than a generic ESP32-DevKitC
-but still ~15× worse than a bare ESP32-WROOM module on a custom PCB. A
-bare-module build with DS18B20 power-switching and lower active current
-could plausibly reach 2+ years, but the Lolin32 Lite design (chosen for
-ease of build and the integrated battery connector) is the realistic
+The Lolin32 Lite has a low-quiescent ME6211-33 LDO (Iq ≈ 1 µA) and a
+CH340 USB-UART that is **only powered when USB is connected** — on
+battery the CH340 is unpowered and contributes nothing. Result:
+~150 µA in deep sleep, roughly 15× better than a generic ESP32-DevKitC
+(whose CP2102 stays powered from the rail) but still ~15× worse than a
+bare ESP32-WROOM module on a custom PCB. A bare-module build with
+DS18B20 power-switching and lower active current could plausibly reach
+2+ years, but the Lolin32 Lite design (chosen for ease of build and the
+integrated TP4054 charger + JST-PH battery connector) is the realistic
 optimum here.
 
 ---
 
 ## Bill of Materials
 
-| # | Component | Specification | Notes |
-|---|---|---|---|
-| 1 | **Lolin32 Lite** ESP32 dev board | ESP32-WROOM-32, integrated 18650-friendly LDO, JST-PH battery connector | Critical: this exact board (or one with comparable sleep current). Generic ESP32-DevKitC will drain in weeks. |
-| 2 | DS18B20 waterproof probe | Stainless steel, ≥1 m cable, 3-wire (red / yellow / black) | |
-| 3 | NCR18650B Li-Ion cell | 3.6 V nominal, 3400 mAh, **protected** preferred | Charge to 4.1 V (per the SOC table used in firmware), not 4.2 V, for longer cycle life. |
-| 4 | 18650 holder or JST-PH pigtail | Whatever mates with the Lolin32 Lite battery connector | |
-| 5 | 4.7 kΩ resistor | 1/4 W | DS18B20 data-line pull-up to 3V3 |
-| 6 | 2 × 1 MΩ resistors | 1/4 W, 1 % tolerance ideal | Battery voltage divider (see wiring) |
-| 7 | Waterproof enclosure | IP67 ABS junction box, ~100 × 68 × 50 mm | |
-| 8 | PG7 cable gland | Waterproof pass-through for the probe cable | |
+Built around the **LOLIN32 Lite v1.0.0** you already own. All add-on
+components are through-hole / hand-solderable; the LOLIN32 Lite itself
+is factory-populated, so no SMD soldering is required.
+
+| # | Qty | Component | Specification / exact part | Purpose | ~EUR |
+|---|---|---|---|---|---|
+| 1 | 1 | **Wemos/Lolin LOLIN32 Lite v1.0.0** | ESP32-D0WDQ6, ME6211-33 LDO, TP4054 USB charger, CH340 USB-UART, JST-1.25 mm-PH battery connector | MCU + WiFi + on-board charger | (owned) |
+| 2 | 1 | DS18B20 waterproof probe | 1 m stainless steel, 3-wire (red / black / yellow), IP68 | Water temperature | 4.50 |
+| 3 | 1 | NCR18650B **protected** 3400 mAh | Panasonic/Sanyo, button-top, with PCM (over-discharge / over-current protection) | Main battery | 7.00 |
+| 4 | 1 | Keystone 1042P holder | Through-hole, fits 69 mm protected cells | 18650 holder | 1.80 |
+| 5 | 1 | **JST-PH 1.25 mm 2-pin pigtail**, ≥10 cm | Connector + bare leads (red / black) | Connects holder → LOLIN32 Lite JST input | 0.30 |
+| 6 | 1 | **1N5817 Schottky diode**, DO-41 | 1 A / 20 V, V<sub>f</sub> ≈ 0.3 V | Reverse-polarity protection in the pigtail | 0.15 |
+| 7 | 1 | 4.7 kΩ resistor, 1/4 W | any | DS18B20 DATA pull-up to 3V3 | 0.05 |
+| 8 | 2 | 1 MΩ resistor, 1/4 W, 1 % metal-film | low drift | Battery voltage divider (~2.1 µA quiescent) | 0.10 |
+| 9 | 2 | 100 nF radial ceramic, 50 V | X7R | ADC filter (divider midpoint → GND); DS18B20 V<sub>DD</sub> bypass | 0.10 |
+| 10 | 1 | Stripboard, 5 × 7 cm | FR4 single-sided, 2.54 mm pitch | Hand-solder platform | 1.00 |
+| 11 | 1 | Waterproof enclosure | IP67 ABS junction box, ~100 × 68 × 50 mm | Outdoor housing | 3.00 |
+| 12 | 1 | PG7 cable gland | Waterproof pass-through for the probe cable | Cable seal | 0.50 |
+|   |   |   |   | **Total (excl. owned LOLIN32 Lite)** | **~18.50** |
+
+**Why the 1N5817 Schottky in the pigtail?** A reverse-polarity
+slip-up at battery insertion can destroy the LOLIN32 Lite's LDO and
+the ESP32 in microseconds. The 1N5817 in series on the positive lead
+costs ~0.3 V of headroom (still well above the LDO's dropout for the
+NCR18650B's full discharge range) and prevents this entire failure
+class.
 
 **Why 1 MΩ : 1 MΩ for the divider?** At 4 V, a 100 kΩ : 100 kΩ divider
 draws 20 µA *continuously* (160 mAh/year) — meaningful for a
-9-month battery target. 1 MΩ : 1 MΩ draws only 2 µA (16 mAh/year),
+9-month battery target. 1 MΩ : 1 MΩ draws only ~2.1 µA (~18 mAh/year),
 negligible. ESP32 ADC input impedance can handle 1 MΩ source impedance
-fine when `samples: 16` averaging is used (already configured in YAML).
+fine when `samples: 16` averaging is used (already configured in YAML)
+*and* a 100 nF cap is placed from the divider midpoint to GND
+(component #9 — buffers the SAR ADC's switched input).
+
+**Why 100 nF on DS18B20 V<sub>DD</sub>?** The DS18B20's conversion
+draws a brief ~1.5 mA spike from the GPIO16-switched rail. A 100 nF
+ceramic right at the sensor's V<sub>DD</sub> pin (or at the cable
+entry of the stripboard) supplies this transient locally and prevents
+glitches on the OneWire data line, which can otherwise corrupt
+readings on long probe cables.
 
 ---
 
 ## Wiring
 
 ```
- NCR18650B → JST-PH → Lolin32 Lite battery connector (built-in LDO → 3V3 rail)
+ NCR18650B (in Keystone 1042P holder)
+   │
+   │   ┌──── 1N5817 ────┐                Lolin32 Lite v1.0.0
+  (+)──┤ anode    cathode├──── JST-PH ──► BAT+   (built-in TP4054 charger
+  (−)─────────────────────────── JST-PH ──► GND   + ME6211-33 LDO → 3V3)
+                                              │
+ Pigtail (component #5) carries the diode      │
+ inline on the positive lead — solder it       │
+ close to the holder, heat-shrink the joint.   │
+                                              │
+                                       ┌──────┴───────┐
+                                       │ Lolin32 Lite │              DS18B20
+                                       │              │              ┌──────┐
+                                  3V3 ─┤ 3V3 ─ 4.7kΩ ─┐              │      │
+                                       │              │              │      │
+                                       │       GPIO16 ┼───[100nF]────┤ VDD  │ (red)
+                                       │              │      │       │      │
+                                       │        GPIO4 ┼──────┘───────┤ DATA │ (yellow)
+                                       │              │              │      │
+                                       │          GND ┼──────────────┤ GND  │ (black)
+                                       │              │              └──────┘
+                                       │       GPIO35 │◄── divider midpoint
+                                       │              │       (with 100nF to GND)
+                                       └──────────────┘
 
- Lolin32 Lite                       DS18B20 probe
- ┌─────────────┐                    ┌──────────┐
- │       3V3   │── 4.7kΩ ──┐        │          │
- │             │           │        │          │
- │      GPIO16 │───────────┼────────┤ VDD (red)│
- │       GPIO4 │───────────┴────────┤ DATA(yel)│
- │         GND │────────────────────┤ GND(blk) │
- │             │                    └──────────┘
- │      GPIO35 │◄── voltage-divider midpoint
- │             │
- │         BAT │── (cell + via JST-PH)
- │         GND │── (cell − via JST-PH)
- └─────────────┘
-
- Battery voltage divider (high impedance, low quiescent):
-       BAT+ ── 1 MΩ ── GPIO35 ── 1 MΩ ── GND
+ Battery voltage divider (high impedance, low quiescent), built on stripboard:
+       BAT+ ── 1 MΩ ──┬── GPIO35
+                      ├── 100 nF ── GND       (ADC anti-alias / sample-buffer)
+                      └── 1 MΩ ─── GND
 ```
 
 | ESP32 Pin | Wire | Purpose |
 |---|---|---|
 | `GPIO4` | DS18B20 DATA (yellow) | OneWire data, 4.7 kΩ pull-up to 3V3 |
-| `GPIO16` | DS18B20 VDD (red) | Switched power rail; goes LOW in deep sleep |
+| `GPIO16` | DS18B20 V<sub>DD</sub> (red) | Switched power rail; goes LOW in deep sleep. Place 100 nF X7R cap from V<sub>DD</sub> to GND right at the sensor (or at the stripboard cable entry) to absorb the ~1.5 mA conversion spike. |
 | `GND` | DS18B20 GND (black) | Common ground |
-| `GPIO35` | Divider midpoint | Battery voltage on ADC1 (works with WiFi active) |
+| `GPIO35` | Divider midpoint | Battery voltage on ADC1 (works with WiFi active). 100 nF X7R cap from this node to GND buffers the SAR ADC's switched input. |
+| `BAT+` (JST-PH) | Cell + via 1N5817 anode→cathode | Reverse-polarity protected supply path |
+| `GND` (JST-PH) | Cell − | Battery return |
 
 ### Why power the DS18B20 from a GPIO?
 
