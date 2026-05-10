@@ -1,4 +1,4 @@
-# Pool Temperature Monitor — production firmware (v2.0.0)
+# Pool Temperature Monitor — production firmware (v2.0.1)
 # Hardware: Lolin32 Lite + NCR18650B (single 18650 cell)
 # Wiring:
 #   GPIO4   DS18B20 data (yellow), 4.7 kΩ pull-up to 3V3
@@ -30,7 +30,7 @@ esphome:
   min_version: 2026.4.0
   project:
     name: "homelab.pooltemperature"
-    version: "2.0.0"
+    version: "2.0.1"
   on_boot:
     # Earliest priority: increment reboot counter if this was a real
     # reboot (RST button, battery swap, HA software-restart, panic,
@@ -102,7 +102,12 @@ ota:
 safe_mode:
   num_attempts: 10
   reboot_timeout: 5min
-  boot_is_good_after: 1min
+  # MUST be shorter than the awake window (~5–10 s), otherwise every
+  # normal deep_sleep.enter looks like a "boot reset before successful"
+  # to safe_mode and triggers a partition rollback after num_attempts
+  # wakes. ESPHome setup completes in ~500 ms; 1 s gives a small margin
+  # to mark the boot good before our publish-then-sleep script runs.
+  boot_is_good_after: 1s
 
 wifi:
   networks:
