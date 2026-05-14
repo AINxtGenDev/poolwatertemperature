@@ -1,20 +1,138 @@
 
 
-https://github.com/AINxtGenDev/poolwatertemperature
-
-/home/nuc8/.ssh/github_werner
-
-
+/karpathy-guideline
 /esphome
 /home-assistant
 
+
+provide a plan based on best practices to get stable and reliably code
+
 project: Pool Temperature Monitor
-A battery-powered ESP32 that measures the pool water temperature every hour using a DS18B20 sensor and transmits the data to Home Assistant via Native API over Wi-Fi.
-It wakes up from deep sleep every hour, transmits the data in about 10 seconds, and then enters deep sleep mode again. A single 18650 cell - full charged 4.2 volt,
+A battery-powered ESP32 that measures the pool water temperature every two hours using a DS18B20 sensor and transmits the data to Home Assistant via Native API over Wi-Fi.
+It wakes up from deep sleep every hour, transmits the data in about 10 seconds, and then enters deep sleep mode again. A single 18650 cell NCR18650B - full charged 4.2 volt,
 the 4.2 volts were reliably measured using a meter.
 Also consider the possibility of updating the firmware later if changes are needed, without adding additional hardware components such as a button to a GPIO pin;
 perhaps an internal reboot counter is a good approach, e.g., remaining available for 2 minutes after every e.g. 10th reboot—I think that’s enough time to install new firmware.
 A reboot occurs when I press the RST button on my Lolin32 Lite MCU or when I replace the battery or i restart the device on behalf a software restart button within home assistant.
 A must-have requirement is that the system must function for 9 months without a battery replacement; if that is not possible, extend the measurement intervals to 2 hours.
 
+use also this State of Charge (SOC) Voltage table:
 
+NCR18650B Battery - State of Charge (SOC) Voltage
+100% --> 4.100 V
+75% --> 3.875 V
+50% --> 3.650 V
+25% --> 3.425 V
+0% --> 3.200 V
+
+
+
+remote repository https://github.com/AINxtGenDev/poolwatertemperature
+
+local: github key: /home/nuc8/.ssh/github_werner
+       docker: /home/nuc8/dockerimages/docker-compose.yaml
+       docker compose ps
+       NAME           IMAGE                               COMMAND                  SERVICE        CREATED        STATUS                  PORTS
+       esphome        ghcr.io/esphome/esphome:latest      "/entrypoint.sh dash…"   esphome        23 hours ago   Up 23 hours (healthy)   0.0.0.0:6052->6052/tcp, [::]:6052->6052/tcp
+       within esphome docker image use pooltemperature.yaml
+
+
+use Outdoor_AP as primary, add Aruba_HPE_WLAN as priority-2 fallback
+
+
+
+[09:05:22.870][C][logger:219]: Logger:
+[09:05:22.870][C][logger:219]:   Max Level: VERBOSE
+[09:05:22.870][C][logger:219]:   Initial Level: VERBOSE
+[09:05:22.873][C][logger:226]:   Log Baud Rate: 0
+[09:05:22.873][C][logger:226]:   Hardware UART: UART0
+[09:05:22.878][C][logger:235]:   Task Log Buffer Size: 768 bytes
+[09:05:22.878][I][logger:254]: VERBOSE logging is active — performance impact, short-term debugging only
+[09:05:22.878][I][logger:254]:   Set log level to DEBUG or lower for long-term use.
+[09:05:22.884][C][gpio.one_wire:021]: GPIO 1-wire bus:
+[09:05:22.887][C][gpio.one_wire:152]:   Pin: GPIO4
+[09:05:22.888][C][gpio.one_wire:085]:   Found devices:
+[09:05:22.888][C][gpio.one_wire:088]:     0x8448695309646128 (DS18B20)
+[09:05:22.897][C][switch.gpio:088]: GPIO Switch 'ds18b20_power'
+[09:05:22.897][C][switch.gpio:088]:   Restore Mode: always ON
+[09:05:22.900][C][switch.gpio:152]:   Pin: GPIO16
+[09:05:22.925][C][template.sensor:017]: Template Sensor 'Pooltemperature Battery Level'
+[09:05:22.925][C][template.sensor:017]:   State Class: 'measurement'
+[09:05:22.925][C][template.sensor:017]:   Unit of Measurement: '%'
+[09:05:22.925][C][template.sensor:017]:   Accuracy Decimals: 0
+[09:05:22.935][C][template.sensor:232]:   Device Class: 'battery'
+[09:05:22.935][C][template.sensor:451]:   Update Interval: 60.0s
+[09:05:22.936][C][uptime.sensor:017]: Uptime Sensor 'Pooltemperature Uptime'
+[09:05:22.936][C][uptime.sensor:017]:   State Class: 'total_increasing'
+[09:05:22.936][C][uptime.sensor:017]:   Unit of Measurement: 's'
+[09:05:22.936][C][uptime.sensor:017]:   Accuracy Decimals: 0
+[09:05:22.939][C][uptime.sensor:232]:   Device Class: 'duration'
+[09:05:22.939][C][uptime.sensor:223]:   Icon: 'mdi:timer-outline'
+[09:05:22.940][C][uptime.sensor:019]:   Type: Seconds
+[09:05:22.958][C][dallas.temp.sensor:029]: Dallas Temperature Sensor:
+[09:05:22.963][C][dallas.temp.sensor:034]:   Address: 0x8448695309646128 (DS18B20)
+[09:05:22.963][C][dallas.temp.sensor:035]:   Resolution: 12 bits
+[09:05:22.967][C][dallas.temp.sensor:451]:   Update Interval: 10.0s
+[09:05:22.967][C][adc.esp32:017]: ADC Sensor 'Pooltemperature Battery Voltage'
+[09:05:22.967][C][adc.esp32:017]:   State Class: 'measurement'
+[09:05:22.967][C][adc.esp32:017]:   Unit of Measurement: 'V'
+[09:05:22.967][C][adc.esp32:017]:   Accuracy Decimals: 3
+[09:05:22.970][C][adc.esp32:232]:   Device Class: 'voltage'
+[09:05:22.974][C][adc.esp32:152]:   Pin: GPIO35
+[09:05:22.974][C][adc.esp32:125]:   Channel:       7
+[09:05:22.974][C][adc.esp32:125]:   Unit:          ADC1
+[09:05:22.974][C][adc.esp32:125]:   Attenuation:   12 dB
+[09:05:22.974][C][adc.esp32:125]:   Samples:       10
+[09:05:22.974][C][adc.esp32:125]:   Sampling mode: average
+[09:05:22.974][C][adc.esp32:125]:   Setup Status:
+[09:05:22.974][C][adc.esp32:125]:     Handle Init:  OK
+[09:05:22.974][C][adc.esp32:125]:     Config:       OK
+[09:05:22.974][C][adc.esp32:125]:     Calibration:  OK
+[09:05:22.974][C][adc.esp32:125]:     Overall Init: OK
+[09:05:22.975][C][adc.esp32:451]:   Update Interval: 60.0s
+[09:05:22.983][C][wifi_info:016]: SSID 'Pooltemperature Connected SSID'
+[09:05:23.011][C][wifi_info:016]: BSSID 'Pooltemperature Connected BSSID'
+[09:05:23.011][C][wifi_info:016]: IP Address 'Pooltemperature IP Address'
+[09:05:23.011][C][restart.button:014]: Restart Button 'Pooltemperature Restart'
+[09:05:23.016][C][restart.button:223]:   Icon: 'mdi:restart'
+[09:05:23.022][C][wifi:1505]: WiFi:
+[09:05:23.022][C][wifi:1505]:   Local MAC: 3C:E9:0E:7F:31:24
+[09:05:23.022][C][wifi:1505]:   Connected: YES
+[09:05:23.022][C][wifi:1216]:   IP Address: 192.168.1.86
+[09:05:23.022][C][wifi:1227]:   SSID: [redacted]
+[09:05:23.022][C][wifi:1227]:   BSSID: [redacted]
+[09:05:23.022][C][wifi:1227]:   Hostname: 'pooltemperature'
+[09:05:23.022][C][wifi:1227]:   Signal strength: -69 dB ▂▄▆█
+[09:05:23.022][C][wifi:1227]:   Channel: 11
+[09:05:23.022][C][wifi:1227]:   Subnet: 255.255.255.0
+[09:05:23.022][C][wifi:1227]:   Gateway: 192.168.1.254
+[09:05:23.022][C][wifi:1227]:   DNS1: 192.168.1.35
+[09:05:23.022][C][wifi:1227]:   DNS2: 0.0.0.0
+[09:05:23.032][C][esphome.ota:071]: Over-The-Air updates:
+[09:05:23.032][C][esphome.ota:071]:   Address: 192.168.1.86:3232
+[09:05:23.032][C][esphome.ota:071]:   Version: 2
+[09:05:23.040][C][esphome.ota:078]:   Password configured
+[09:05:23.041][C][safe_mode:026]: Safe Mode:
+[09:05:23.041][C][safe_mode:026]:   Successful after: 60s
+[09:05:23.041][C][safe_mode:026]:   Invoke after: 10 attempts
+[09:05:23.041][C][safe_mode:026]:   Duration: 300s
+[09:05:23.041][C][safe_mode:043]:   Bootloader rollback: supported
+[09:05:23.054][C][api:235]: Server:
+[09:05:23.054][C][api:235]:   Address: 192.168.1.86:6053
+[09:05:23.054][C][api:235]:   Listen backlog: 4
+[09:05:23.054][C][api:235]:   Max connections: 8
+[09:05:23.066][C][api:242]:   Noise encryption: YES
+[09:05:23.066][C][mdns:194]: mDNS:
+[09:05:23.066][C][mdns:194]:   Hostname: pooltemperature
+[09:05:23.066][V][mdns:199]:   Services:
+[09:05:23.066][V][mdns:201]:   - _esphomelib, _tcp, 6053
+[09:05:23.066][V][mdns:204]:     TXT: friendly_name = Pooltemperature
+[09:05:23.066][V][mdns:204]:     TXT: version = 2026.4.5
+[09:05:23.066][V][mdns:204]:     TXT: mac = 3ce90e7f3124
+[09:05:23.069][V][mdns:204]:     TXT: platform = ESP32
+[09:05:23.070][V][mdns:204]:     TXT: board = esp32dev
+[09:05:23.070][V][mdns:204]:     TXT: network = wifi
+[09:05:23.072][V][mdns:204]:     TXT: api_encryption = Noise_NNpsk0_25519_ChaChaPoly_SHA256
+[09:05:32.465][D][dallas.temp.sensor:054]: 'Pool Water Temperature': Got Temperature=24.937500°C
+[09:05:32.509][V][sensor:077]: 'Pool Water Temperature': Received new state 24.937500
+[09:05:32.509][V][sensor:125]: 'Pool Water Temperature' >> 24.9 °C

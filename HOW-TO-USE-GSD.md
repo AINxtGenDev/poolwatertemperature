@@ -33,7 +33,24 @@ fights *context rot* (Claude getting dumber as its context fills) by:
 - Persisting decisions in `.planning/` so cross-session memory survives.
 
 You drive it with `/gsd-*` slash commands inside Claude Code. The current
-local install is **GSD 1.39.1** (per checkpoint).
+local install is **GSD 1.39.1** (per checkpoint); upstream has since
+shipped 1.40 (six namespace meta-skills, see §10) and 1.41 (post-merge
+build/test gate, runtime profile expansion, milestone-archive layout
+support).
+
+Since v1.40 you can also drive GSD via *namespace routers* —
+`/gsd-workflow`, `/gsd-project`, `/gsd-quality`, `/gsd-context`,
+`/gsd-manage`, `/gsd-ideate` — which dispatch to the concrete sub-skill
+based on intent. Concrete commands (`/gsd-plan-phase`, etc.) still work
+unchanged. The routers cut cold-start system-prompt overhead from
+~2 150 tokens to ~120 — useful if you run `--minimal`.
+
+A v1.51 *Package Legitimacy Gate* runs `slopcheck` against any package
+the researcher recommends and surfaces a `[SLOP]`/`[SUS]`/`[OK]` audit
+in `RESEARCH.md`. Largely irrelevant for this firmware project (no npm
+deps), but if a future phase needs e.g. a Python helper for log parsing,
+expect a `checkpoint:human-verify` before any unfamiliar package is
+installed.
 
 ---
 
@@ -274,11 +291,14 @@ just put a one-liner in `PROJECT.md`:
 npx get-shit-done-cc@latest --claude --global --minimal
 ```
 
-Drops from 86 skills to 6 core ones (~700 tokens vs ~12k system-prompt
-overhead). For a project this small, `--minimal` is plenty — you mostly
-need `new-project`, `discuss-phase`, `plan-phase`, `execute-phase`, `help`,
-`update`. Anything else (`/gsd-debug`, `/gsd-spike`) you can re-install
-on demand.
+Drops the (now 59-skill, post-1.40 consolidation) full surface to 6
+core ones (~700 tokens vs ~12k system-prompt overhead). For a project
+this small, `--minimal` is plenty — you mostly need `new-project`,
+`discuss-phase`, `plan-phase`, `execute-phase`, `help`, `update`.
+Anything else (`/gsd-debug`, `/gsd-spike`) you can re-install on
+demand. On Sonnet 4.6 / Opus 4.7 (1M context) the savings are mostly
+academic; on local 32K–128K-context models, `--minimal` is the
+difference between "works" and "won't fit".
 
 > Caveat: `--minimal` removes some of the niceties listed in this guide
 > (`/gsd-quick`, `/gsd-fast`, `/gsd-progress`). Worth it if context is tight.
@@ -467,13 +487,24 @@ Don't duplicate the structured content. Link to it.
 
 ---
 
-## 10. Cheat-sheet — the 12 commands you'll actually use
+## 10. Cheat-sheet — the commands you'll actually use
 
 ```text
 # Status & navigation
 /gsd-help                       # full command list
 /gsd-progress                   # what GSD thinks you should do next
+/gsd-progress --do              # do the suggested next step right now (replaces deleted /gsd-do)
+/gsd-progress --next            # peek at what /gsd-progress would do (replaces deleted /gsd-next)
 /gsd-settings                   # model profile, workflow toggles, git strategy
+/gsd-health --context           # context-utilization quality guard (60% warn, 70% critical)
+
+# Namespace routers (v1.40+) — useful when you don't remember the exact command
+/gsd-workflow                   # → discuss / plan / execute / verify / phase / progress
+/gsd-project                    # → milestones, audits, summary
+/gsd-quality                    # → code review, debug, audit, security, eval, ui
+/gsd-context                    # → map, graphify, docs, learnings
+/gsd-manage                     # → config, workspace, workstreams, thread, update, ship, inbox
+/gsd-ideate                     # → explore, sketch, spike, spec, capture
 
 # Brownfield setup (run once)
 /gsd-map-codebase               # ingest existing code into .planning/codebase/
@@ -482,8 +513,12 @@ Don't duplicate the structured content. Link to it.
 # The phase loop (the core 4)
 /gsd-discuss-phase N            # capture decisions before planning
 /gsd-plan-phase N               # research + atomic plans
+/gsd-plan-phase --research-phase N   # research-only mode (replaces deleted /gsd-research-phase)
+/gsd-plan-review-convergence N  # cross-AI replan-until-no-HIGH-concerns loop
 /gsd-execute-phase N            # run plans, atomic commits
+/gsd-execute-phase N --wave M   # run only wave M (useful for hardware-staged rollout)
 /gsd-verify-work N              # UAT after execution
+/gsd-edit-phase N               # change a phase field without renumbering
 
 # Ad-hoc
 /gsd-quick "<task>"             # single managed task, atomic commit, basic verify
@@ -493,6 +528,10 @@ Don't duplicate the structured content. Link to it.
 /gsd-debug "<bug>"              # state-persistent debugging session
 /gsd-spike "<idea>"             # throwaway feasibility check
 /gsd-explore "<topic>"          # Socratic dialogue, no commits
+
+# Quality gates
+/gsd-code-review                # review a phase's diff
+/gsd-code-review --fix          # …and apply fixes (replaces deleted /gsd-code-review-fix)
 
 # When ready to ship
 /gsd-ship N                     # create PR from verified phase
@@ -547,7 +586,149 @@ device is ready for waterproofing and pool deployment.
 
 ---
 
-## 12. Further reading
+## 12. Short example — starting *Pool Temperature Monitor v1* from a clean slate
+
+> Use this section when somebody asks "how do I start a small project
+> like ours with GSD?". The brownfield path lives in §3–§5; this is
+> the *green-field* version of the same project, condensed to the
+> minimum viable command flow. Useful as a teaching script.
+
+### 12.1. The brief (paste this verbatim into `/gsd-new-project`)
+
+```
+Project: Pool Temperature Monitor
+
+A battery-powered ESP32 (LOLIN32 Lite) that measures pool water
+temperature once an hour using a DS18B20 one-wire sensor and
+publishes it to Home Assistant via the ESPHome Native API over
+WiFi.
+
+Power: a single 18650 cell (NCR18650B, 4.2 V freshly charged,
+verified with a DMM). No second cell, no solar, no USB.
+
+Cycle: wake from deep sleep → DS18B20 conversion → WiFi
+associate → publish to HA → deep-sleep again. Wall-clock target
+≤ 10 s awake per cycle.
+
+OTA without extra hardware: no GPIO button. Use a persistent
+boot counter; every 10th boot the device stays awake for
+2 minutes with the OTA service exposed. A "boot" is any cold
+start — RST button, battery replacement, or the HA
+software-restart-button.
+
+Hard requirement: 9 months on a single charge. If the energy
+budget cannot meet that at 1 h cadence, fall back to 2 h cadence
+and document the decision in PROJECT.md.
+
+Out of scope for v1.0: bluetooth_proxy, pH/chlorine sensors,
+non-HA dashboards, automated waterproofing.
+```
+
+### 12.2. The five-command flow
+
+```text
+1. /gsd-new-project            # paste the brief above. GSD writes
+                               # PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md.
+
+2. /gsd-discuss-phase 1        # answer the gray-area questions (§12.3).
+
+3. /gsd-plan-phase 1           # research + 2-3 plans, atomic commits.
+                               # Reject any plan that doesn't show the energy math (§12.4).
+
+4. /gsd-execute-phase 1        # parallel-wave execute. Each task = one commit.
+
+5. /gsd-verify-work 1          # UAT on the bench (§12.5).
+
+# Ship
+/gsd-ship 1                    # PR from the verified phase.
+/gsd-complete-milestone        # tag v1.0.
+```
+
+That's the whole loop. ~90 minutes of attention split across 1–3
+sessions, plus ~7 days of unattended battery-longevity bench-time
+between step 5 and `/gsd-ship`.
+
+### 12.3. Discuss-phase answers ready in advance
+
+GSD will ask roughly these questions; here are the right answers for
+this brief so you can power through:
+
+| Question                          | Answer                                                                 |
+| --------------------------------- | ---------------------------------------------------------------------- |
+| OTA trigger?                      | Boot-counter modulo 10; 120 s awake window with OTA service exposed.   |
+| What advances the counter?        | Every cold boot — RST button, battery swap, HA software-restart-button.|
+| Where is the counter persisted?   | NVS (esp-idf nvs partition); survives deep sleep and power cycles.     |
+| Cadence?                          | 1 h primary; fall back to 2 h iff §12.4 math fails.                    |
+| Wake budget?                      | ≤ 10 s, including ≤ 750 ms DS18B20 conversion.                         |
+| Framework?                        | esp-idf (lower deep-sleep current than Arduino on LOLIN32 Lite).       |
+| Multi-AP fallback?                | Yes, SSIDs from `secrets.yaml`.                                        |
+| DS18B20 address?                  | Pinned (read once during smoke-test, hard-coded in YAML).              |
+| `safe_mode:`?                     | Enabled.                                                               |
+| Battery cutoff?                   | 3.2 V — below this, skip the publish, sleep through (avoid cell damage).|
+| Time source?                      | HA Native API on each wake (no RTC needed; HA's clock is good enough). |
+| Reporting on battery?             | Yes — `voltage` + `boot_counter` + `wake_duration_ms` per cycle.       |
+
+### 12.4. Energy math GSD must include in the plan
+
+Reject any plan that doesn't show numbers in this shape:
+
+```
+Cell:         NCR18650B ≈ 3 200 mAh @ 3.6 V nominal
+Awake/cycle:  10 s × 80 mA  = 0.222 mAh
+Sleep:        120 µA × 24 h = 2.88 mAh/day
+
+1 h cadence:  24 × 0.222 + 2.88 ≈ 8.21 mAh/day
+              3 200 / 8.21 ≈ 390 days ≈ 12.8 months  → PASS
+
+2 h fallback: 12 × 0.222 + 2.88 ≈ 5.54 mAh/day
+              3 200 / 5.54 ≈ 577 days ≈ 19 months    → PASS with margin
+```
+
+If empirical sleep current measures > 200 µA, re-do the math; if
+1 h still fits, stay; otherwise drop to 2 h and edit `PROJECT.md`
+plus `REQUIREMENTS.md` accordingly (this is a `/gsd-edit-phase` move,
+not a code change).
+
+### 12.5. Verify checklist (after `/gsd-execute-phase 1`)
+
+```text
+[ ] docker exec esphome esphome config /config/pooltemperature.yaml
+    →  "Configuration is valid!"
+[ ] First flash: device boots, joins WiFi, reads DS18B20 within 10 s,
+    publishes to HA, then enters deep sleep.
+[ ] Force OTA window: tap RST 9 more times so boot 10 lands.
+    Device stays online ≥ 120 s. Push a no-op YAML change OTA → succeeds.
+[ ] DMM in series during deep sleep: ≤ 120 µA (target), ≤ 200 µA (acceptable).
+[ ] HA shows boot_counter incrementing across each wake.
+[ ] 7-day bench run → linear-extrapolate cell drop. Must project ≥ 9 months
+    before /gsd-ship.
+```
+
+### 12.6. If verify fails
+
+```text
+/gsd-debug "deep-sleep current measures 4 mA, expected ≤ 120 µA after first wake"
+```
+
+`/gsd-debug` persists state across context resets, so a multi-day
+hardware bug-hunt doesn't lose the thread.
+
+### 12.7. Things to deliberately *not* do in v1
+
+- **Don't** add a button-on-GPIO33 OTA trigger — the user explicitly
+  rejected hardware additions; the boot counter is the contract.
+- **Don't** wake the device for "diagnostics" between scheduled wakes;
+  diagnostics are folded into the same 10 s budget.
+- **Don't** add `bluetooth_proxy:`. It alone breaks the energy budget.
+- **Don't** commit `secrets.yaml` real values into `.planning/`.
+- **Don't** ship before the 7-day bench projection.
+
+Capture the rejected ideas with `/gsd-capture` so they land cleanly in
+v1.1's milestone backlog.
+
+---
+
+## 13. Further reading
 
 - Upstream GSD repo: <https://github.com/gsd-build/get-shit-done>
 - Local install location: `~/.claude/skills/gsd-*`
@@ -559,5 +740,8 @@ device is ready for waterproofing and pool deployment.
 
 ---
 
-*Last updated: 2026-05-02. Bump when GSD or the project changes
-substantially.*
+*Last updated: 2026-05-09. Bump when GSD or the project changes
+substantially. This revision: refreshed for upstream GSD v1.40
+(namespace routers), v1.41 (post-merge build/test gate), and v1.51
+(slopcheck Package Legitimacy Gate); added §12 green-field starter
+example for the 1-h-cadence / 10th-boot-OTA / 9-month-battery brief.*
