@@ -1,7 +1,92 @@
 # Session Checkpoint — Pool Temperature Monitor
 
-**Last session:** 2026-05-10 (afternoon)
+**Last session:** 2026-05-14 (morning)
 **Working dir:** `/home/nuc8/01_smarthome/01_HomeAssistant/03_esphome/02_pool_watertemperature/esp32_lolin32_lite`
+
+## 2026-05-14 (morning) — Battery reading diagnosis: divider math says hardware, user to verify on bench
+
+### User's fresh measurements (v2.0.1 device, currently in deep sleep)
+
+| Point | Measured |
+|---|---|
+| Cell at JST (DMM) | **4.112 V** |
+| GPIO35 to GND (DMM) | **580 mV** |
+| HA `Battery Voltage` (screenshot) | **1.71 V** (also seen: 1.17 V, occasionally ~6 V) |
+| HA `Battery Level` | **5 %** |
+| HA WiFi: SSID `Aruba_HPE_WLAN`, RSSI −62 dBm, IP 192.168.1.86 |
+
+Screenshot ref: `/home/nuc8/Pictures/Screenshots/Screenshot from 2026-05-14 08-08-39.png`.
+Device fell back to Aruba (priority 5), not `Outdoor_AP` (priority 10) — flag for later, not today's focus.
+
+User asserts both divider resistors are 1 MΩ. User then hypothesised that
+deep sleep itself might explain the 580 mV reading.
+
+### My response — physics says no
+
+A pure passive 1 MΩ / 1 MΩ divider on 4.112 V **must** produce ~2.06 V at
+GPIO35 regardless of MCU power state. The MCU in deep sleep doesn't
+affect a passive divider because GPIO34–39 are input-only with no internal
+pulls; nothing on-chip can drag a 2.06 V node down to 580 mV via leakage.
+
+Reverse-solving the observed 580 mV: 4.112 V × (1/7.09) = 580 mV → actual
+in-circuit divider ratio is ~7:1, not 1:1. Possible explanations (all
+hardware, not firmware):
+
+1. **Measurement context wrong**: cell was disconnected when DMM probed
+   GPIO35 → BAT side floats → residual leakage gives ~hundreds of mV.
+2. **R_top isn't wired to BAT+** (after the 1N5817) — could be on 3V3
+   LDO output (expected 1.65 V), or on a switched rail that's off during
+   sleep (expected ~0 V, not 580 mV), or somewhere else entirely.
+3. **In-circuit resistor measurement misleading**: parallel paths via LDO
+   input, ceramic caps, the other divider leg distort the reading. The
+   user's "1 MΩ each" check may not be authoritative.
+
+The "sometimes 6 V" in HA = the `multiply: 2.0` filter amplifying ADC
+noise on a high-impedance / partially-broken node. Disappears once the
+divider produces a clean low-impedance ~2 V.
+
+### Three verification steps user agreed to do later
+
+1. **Wake-and-measure**: press RST, probe GPIO35 within first 10 s before
+   device sleeps again. If it jumps to ~2 V → wiring routes the divider
+   through a rail only powered during awake window (option 2 above) →
+   that's the bug. If still 580 mV → divider topology itself is wrong.
+2. **Confirm cell was connected** when the 580 mV reading was taken
+   (clarify option 1).
+3. **Out-of-circuit resistor verification**: disconnect JST → lift one
+   end of each resistor → DMM 20 MΩ range → must read 1.00 MΩ ±5 % each.
+   Only this is authoritative for resistor value.
+
+### What I did NOT do this session
+
+- No firmware changes. v2.0.1 ADC config (`attenuation: 12db`, `samples: 16`,
+  `multiply: 2.0`) is correct for a real 1 MΩ : 1 MΩ divider on a single
+  Li-ion cell. Speculatively adding `calibrate_linear`, settling delays,
+  or multi-read averaging would mask a hardware fault.
+- No commit. No `pooltemperature.yaml` touched.
+- No version bump.
+
+### State at end of session
+
+- v2.0.1 still flashed, in deep sleep, on Aruba fallback. Pool temp 23.5 °C
+  reading correctly (DS18B20 path is fine — only the battery branch is
+  suspect).
+- User to perform the three bench-verification steps when next at the
+  device. Resume from "wake-and-measure result: was GPIO35 at ~2 V or
+  still 580 mV?" — that single data point disambiguates wiring-fault vs.
+  topology-fault.
+
+### Resume next session with
+
+1. Get the wake-and-measure GPIO35 reading.
+2. If ~2 V → trace R_top wire; expect it to be on a switched/LDO rail.
+   Fix is to re-route R_top to JST BAT+ (after 1N5817).
+3. If still 580 mV → divider topology is wrong; out-of-circuit resistor
+   check + photo of perfboard required.
+4. Once divider produces ~2.06 V at GPIO35: no firmware change needed,
+   HA `Battery Voltage` will read correctly via existing `multiply: 2.0`.
+5. Then exercise OTA recovery paths (10× RST counter and HA-action
+   `enter_ota_mode`) as already queued from 2026-05-10.
 
 ## 2026-05-10 (afternoon) — v2.0.1 hotfix: safe_mode rollback resolved; battery reading still TBD
 
